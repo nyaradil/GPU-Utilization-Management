@@ -14,7 +14,7 @@ public Scheduler(ArrayList<Job> jobs, GPU[] gpus, SimulationClock clock) {
 
 void dispatchWaitingJobs() {
     int currentMinute = clock.getElapsedMinutes();
-
+    
     for (int i = 0; i < gpus.length; i++) {
         GPU gpu = gpus[i];
 
@@ -48,7 +48,6 @@ void advanceMinute() {
             }
         }
     }
-
     
     dispatchWaitingJobs();
 }
@@ -67,8 +66,7 @@ void cancelJob(Job job, String actor, String reason) {
 
         job.cancel(currentMinute, actor, reason);
         gpu.releaseJob();
-
-        
+      
         dispatchWaitingJobs();
 
     } else {
@@ -96,7 +94,7 @@ public int getQueuePosition(Job job) {
     return -1;
 }
 
-//review//
+
 
 public int predictStartMinute(Job target) { 
 
@@ -107,7 +105,7 @@ public int predictStartMinute(Job target) {
     int currentMinute = clock.getElapsedMinutes();
     int[] availableAt = new int[gpus.length];
 
-    // Copy when each GPU will become available.
+
     for (int i = 0; i < gpus.length; i++) {
         if (gpus[i].isAvailable()) {
             availableAt[i] = currentMinute;
@@ -116,13 +114,13 @@ public int predictStartMinute(Job target) {
         }
     }
 
-    // Process queued jobs in FCFS order.
+
     for (int i = 0; i < jobs.size(); i++) {
         Job job = jobs.get(i);
 
         if (job.getStatus().equals("Queued")) {
 
-            // Find the GPU with the earliest availability.
+
             int earliestIndex = 0;
 
             for (int g = 1; g < availableAt.length; g++) {
@@ -137,13 +135,12 @@ public int predictStartMinute(Job target) {
                 return predictedStart;
             }
 
-            // Reserve time only in the temporary schedule.
             availableAt[earliestIndex] =
                 predictedStart + job.getEstimatedDuration();
         }
     }
 
-    return -1; // Target was not found in the queue.
+    return -1; 
 }
 
 
@@ -197,6 +194,56 @@ private Job findFirstQueuedJob() {
     }
 
     return null;
+}
+
+public int getPredictedFinishMinute(Job job) {
+    String status = job.getStatus();
+
+    if (status.equals("Queued")) {
+        int predictedStart = predictStartMinute(job);
+
+        if (predictedStart == -1) {
+            return -1;
+        }
+
+        return predictedStart + job.getEstimatedDuration();
+
+    } else if (status.equals("Running")) {
+        return job.getStartMinute()
+                + job.getEstimatedDuration();
+
+    } else if (status.equals("Completed")) {
+        return job.getFinishMinute();
+
+    } else {
+        return -1;
+    }
+}
+
+public int getRemainingWait(Job job) {
+    if (!job.getStatus().equals("Queued")) {
+        return -1;
+    }
+
+    int predictedStart = predictStartMinute(job);
+
+    if (predictedStart == -1) {
+        return -1;
+    }
+
+    return predictedStart - clock.getElapsedMinutes();
+}
+
+private GPU findGpuById(int id) {
+    for (int i = 0; i < gpus.length; i++) {
+        if (gpus[i].getGpuId() == id) {
+            return gpus[i];
+        }
+    }
+
+    throw new IllegalArgumentException(
+        "GPU not found: " + id
+    );
 }
 	
 private GPU findGpuById(int id) {
