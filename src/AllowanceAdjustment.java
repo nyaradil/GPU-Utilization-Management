@@ -11,8 +11,8 @@ public class AllowanceAdjustment {
 		}
 		
 		minutesDelta = delta;
-		this.reason = reason;
-		adminUsername = admin;
+		this.reason = reason.trim();
+		adminUsername = admin.trim();
 		recordedMinute = minute;
 	}
 
