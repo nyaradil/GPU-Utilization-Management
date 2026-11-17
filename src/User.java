@@ -7,9 +7,28 @@ private String password;
 
 
 public User(String username, String name, String password) {
-	this.username = username;
-	this.name = name;
-	this.password = password;
+
+    if (username == null || username.trim().isEmpty()) {
+        throw new IllegalArgumentException(
+            "Username cannot be empty."
+        );
+    }
+
+    if (name == null || name.trim().isEmpty()) {
+        throw new IllegalArgumentException(
+            "Name cannot be empty."
+        );
+    }
+
+    if (password == null || password.trim().isEmpty()) {
+        throw new IllegalArgumentException(
+            "Password cannot be empty."
+        );
+    }
+
+    this.username = username.trim();
+    this.name = name.trim();
+    this.password = password;
 }
 
 
@@ -25,19 +44,15 @@ public String getName() {
 
 
 public boolean passwordMatches(String input) {
-	if (input.equals(password)) {
-		return true;
-	}
-	return false;
+    return password != null && password.equals(input);
 }
 
 public abstract String getRole();
 
-public abstract boolean canCancel();
+public abstract boolean canCancel(Job job);
 
 String getPasswordForStorage() {
     return password;
 }
 
-	
 }
