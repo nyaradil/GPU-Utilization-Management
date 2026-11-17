@@ -11,9 +11,9 @@ public class SimulationClock {
 		initialDateTime = null;
 		elapsedMinutes = 0;
 		initialized = false;
-		formatter = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm"); //ofPattern() is a method in DateTimeFormatter class whci allows us to formate the date and time as we want
+		formatter = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm"); //ofPattern() is a method in DateTimeFormatter class which allows us to format the date and time as we want
 	}
-	private void initialize(LocalDateTime selected) { //Taked the initial time and date the user wants (selected) and makes it the initial time
+	public void initialize(LocalDateTime selected) { //Taked the initial time and date the user wants (selected) and makes it the initial time
 		if (initialized) {
 			throw new IllegalStateException("Clock is already initialized");
 		}
@@ -59,9 +59,9 @@ public class SimulationClock {
 		return dateTime.format(formatter);
 	}
 	
-	publuc void restore(LocalDateTime initial, int elapsed, boolean ready) {
+	public void restore(LocalDateTime initial, int elapsed, boolean ready) {
 		// This method restores the the clock of the user if the app is closed and opened again
-		if (elapsed < 0 || (ready && initial == null)) {
+		if (elapsed < 0 || (ready && initial == null) || (!ready && (initial != null || elapsed != 0))) {
 			//Throw an exception if the elapsed time is negative (impossible) or the clock is initialized while there is no initial date and time
 			throw new IllegalArgumentException("Invalid saved clock information");
 		}
