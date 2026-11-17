@@ -62,7 +62,6 @@ public class GPU {
 		if (isAvailable()) {
 			return -1;
 		}
-		
 		return currentJob.getStartMinute() + currentJob.getEstimatedDuration();
 	}
 }
