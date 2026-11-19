@@ -1,102 +1,127 @@
+
+import java.awt.GridLayout;
+import java.awt.event.ActionEvent;
+import java.awt.event.ActionListener;
+import java.io.IOException;
+import javax.swing.JButton;
+import javax.swing.JFrame;
+import javax.swing.JLabel;
+import javax.swing.JOptionPane;
+import javax.swing.JPanel;
+import javax.swing.JPasswordField;
+import javax.swing.JTextField;
+
+// The login screen delegates account rules to GpuSystem.
+public class LoginFrame extends JFrame implements ActionListener {
+    private GpuSystem system;
+    private JTextField usernameField;
+    private JPasswordField passwordField;
+    private JTextField registrationIdField;
+    private JTextField registrationNameField;
+    private JTextField registrationEmailField;
+    private JTextField registrationPhoneField;
+    private JPasswordField registrationPasswordField;
+    private JLabel statusLabel;
+    private JButton loginButton;
+    private JButton registerButton;
+
+    // Full Constructor: receive the shared application controller.
+    public LoginFrame(GpuSystem system) {
+        this.system = system;
+        setTitle("GPU Utilization Management - Login");
+        setSize(420, 220);
+        setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        setLocationRelativeTo(null);
+        setLayout(new GridLayout(4, 2, 8, 8));
+
+        usernameField = new JTextField();
+        passwordField = new JPasswordField();
+        loginButton = new JButton("Login");
+        registerButton = new JButton("Register");
+        statusLabel = new JLabel(" ");
+
+        add(new JLabel("Username / University ID:"));
+        add(usernameField);
+        add(new JLabel("Password:"));
         add(passwordField);
         add(loginButton);
         add(registerButton);
+        add(statusLabel);
+        add(new JLabel(""));
 
-        // Both buttons use the same event-handling method.
         loginButton.addActionListener(this);
         registerButton.addActionListener(this);
+
+        registrationIdField = new JTextField();
+        registrationNameField = new JTextField();
+        registrationEmailField = new JTextField();
+        registrationPhoneField = new JTextField();
+        registrationPasswordField = new JPasswordField();
     }
 
-    // Handle clicks on the Login and Register buttons.
+    // Both buttons use the same listener.
     public void actionPerformed(ActionEvent event) {
-        if (event.getSource() == loginButton) {
-            login();
-        } else if (event.getSource() == registerButton) {
-            register();
-        }
+        if (event.getSource() == loginButton) handleLogin();
+        else if (event.getSource() == registerButton) handleRegister();
     }
 
-    private void login() {
-        String username = usernameField.getText().trim();
-        String password = new String(passwordField.getPassword());
-
-        // Check empty fields before asking GpuSystem to log in.
-        if (username.length() == 0 || password.length() == 0) {
-            JOptionPane.showMessageDialog(this, "Enter your username and password.");
-            return;
-        }
-
-        if (!system.login(username, password)) {
-            JOptionPane.showMessageDialog(this, system.getLastError());
-            passwordField.setText("");
-            return;
-        }
-
-        // Open the correct dashboard with the SAME GpuSystem object.
-        // The two dashboard classes must have constructors taking GpuSystem.
+    private void handleLogin() {
         try {
-            if (system.isAdministrator()) {
+            User user = system.login(usernameField.getText(),
+                    new String(passwordField.getPassword()));
+
+            // The dashboards must receive the SAME GpuSystem object.
+            if (user instanceof Administrator) {
                 new AdminFrame(system).setVisible(true);
-            } else if (system.isStudent()) {
+            } else if (user instanceof Student) {
                 new StudentFrame(system).setVisible(true);
             } else {
-                system.logout();
-                JOptionPane.showMessageDialog(this, "Unknown account role.");
-                return;
+                throw new IllegalArgumentException("Unknown account type.");
             }
             dispose();
-        } catch (RuntimeException exception) {
+        } catch (RuntimeException e) {
             system.logout();
-            JOptionPane.showMessageDialog(this, "Could not open the dashboard.");
+            showError(e.getMessage());
         }
     }
 
-    private void register() {
-        // Collect all registration details in one simple dialog.
-        JTextField idField = new JTextField();
-        JTextField nameField = new JTextField();
-        JTextField emailField = new JTextField();
-        JTextField phoneField = new JTextField();
-        JPasswordField newPasswordField = new JPasswordField();
-        JPasswordField confirmField = new JPasswordField();
-
-        JPanel form = new JPanel(new GridLayout(6, 2, 5, 5));
+    private void handleRegister() {
+        JPanel form = new JPanel(new GridLayout(5, 2, 5, 5));
         form.add(new JLabel("University ID:"));
-        form.add(idField);
+        form.add(registrationIdField);
         form.add(new JLabel("Name:"));
-        form.add(nameField);
+        form.add(registrationNameField);
         form.add(new JLabel("Email:"));
-        form.add(emailField);
+        form.add(registrationEmailField);
         form.add(new JLabel("Phone:"));
-        form.add(phoneField);
+        form.add(registrationPhoneField);
         form.add(new JLabel("Password:"));
-        form.add(newPasswordField);
-        form.add(new JLabel("Confirm password:"));
-        form.add(confirmField);
+        form.add(registrationPasswordField);
 
         int choice = JOptionPane.showConfirmDialog(this, form,
                 "Student Registration", JOptionPane.OK_CANCEL_OPTION);
-        if (choice != JOptionPane.OK_OPTION) {
-            return;
-        }
+        if (choice != JOptionPane.OK_OPTION) return;
 
-        String password = new String(newPasswordField.getPassword());
-        String confirmation = new String(confirmField.getPassword());
+        try {
+            system.registerStudent(registrationIdField.getText(),
+                    registrationNameField.getText(),
+                    registrationEmailField.getText(),
+                    registrationPhoneField.getText(),
+                    new String(registrationPasswordField.getPassword()));
 
-        // The two passwords must match before submitting the request.
-        if (!password.equals(confirmation)) {
-            JOptionPane.showMessageDialog(this, "Passwords do not match.");
-            return;
-        }
-
-        // GpuSystem validates the details and prevents duplicate requests.
-        if (system.registerStudent(idField.getText().trim(),
-                nameField.getText().trim(), emailField.getText().trim(),
-                phoneField.getText().trim(), password)) {
+            registrationPasswordField.setText("");
+            statusLabel.setText("Request pending approval.");
             JOptionPane.showMessageDialog(this,
                     "Registration submitted. Wait for administrator approval.");
-        } else {
-            JOptionPane.showMessageDialog(this, system.getLastError());
+        } catch (IOException e) {
+            showError("Could not save registration: " + e.getMessage());
+        } catch (IllegalArgumentException e) {
+            showError(e.getMessage());
         }
+    }
+
+    private void showError(String message) {
+        statusLabel.setText("Please correct the error.");
+        JOptionPane.showMessageDialog(this, message);
     }
 }
