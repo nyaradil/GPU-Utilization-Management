@@ -1,836 +1,741 @@
 
-import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 
-// Controls accounts, jobs, allowances and the GPU simulation.
+// One controller owns the data; screens never schedule jobs directly.
 public class GpuSystem {
-
-    private Storage storage;
-    private FileManager fileManager;
+    private ArrayList<User> users;
+    private ArrayList<AccessRequest> requests;
+    private ArrayList<Job> jobs;
+    private GPU[] gpus;
+    private SimulationClock clock;
     private Scheduler scheduler;
+    private Storage storage;
     private User currentUser;
-    private String lastError;
+    private int nextJobId;
 
-    // Default Constructor
-    public GpuSystem() {
-        storage = new Storage();
-        fileManager = new FileManager();
-        scheduler = new Scheduler(
-                storage.getJobs(), storage.getGpus(), storage.getClock());
+    // Full Constructor
+    public GpuSystem(Storage storage) {
+        if (storage == null)
+            throw new IllegalArgumentException("Storage required.");
+
+        this.storage = storage;
+        users = new ArrayList<User>();
+        users.add(new Administrator());
+        requests = new ArrayList<AccessRequest>();
+        jobs = new ArrayList<Job>();
+
+        // Create the four required GPUs.
+        gpus = new GPU[4];
+        for (int i = 0; i < 4; i++)
+            gpus[i] = new GPU(i + 1);
+
+        clock = new SimulationClock();
+        scheduler = new Scheduler(jobs, gpus, clock);
         currentUser = null;
-        lastError = "";
+        nextJobId = 1;
     }
 
-    public String getLastError() { return lastError; }
-
-    public String getCurrentUsername() {
-        if (currentUser == null) return "";
-        return currentUser.getUsername();
+    public void load() throws IOException {
+        storage.loadInto(this);
     }
 
-    public boolean isAdministrator() {
-        return currentUser instanceof Administrator;
+    public void save() throws IOException {
+        storage.save(this);
     }
 
-    public boolean isStudent() {
-        return currentUser instanceof Student;
-    }
-
-    public boolean isClockInitialized() {
-        return storage.getClock().isInitialized();
-    }
-
-    private boolean fail(String message) {
-        lastError = message;
+    private boolean filled(String text) {
+        if (text == null) return false;
+        for (int i = 0; i < text.length(); i++)
+            if (text.charAt(i) > ' ') return true;
         return false;
     }
 
-    private boolean requireAdmin() {
-        if (!isAdministrator()) {
-            return fail("Administrator login required.");
-        }
-        return true;
+    private User findUser(String username) {
+        if (username == null) return null;
+        for (User user : users)
+            if (username.equals(user.getUsername())) return user;
+        return null;
     }
 
-    private boolean filled(String value) {
-        if (value == null) return false;
-
-        for (int i = 0; i < value.length(); i++) {
-            if (value.charAt(i) > ' ') return true;
-        }
-        return false;
+    private Job findJob(int jobId) {
+        for (Job job : jobs)
+            if (job.getJobId() == jobId) return job;
+        return null;
     }
 
-    // Required task sizes and simulated durations.
-    private int durationFor(String size) {
-        if ("Small".equals(size)) return 5;
-        if ("Medium".equals(size)) return 15;
-        if ("Large".equals(size)) return 30;
-        if ("Very large".equals(size)) return 60;
-        return -1;
+    private Student requireStudent() {
+        if (!(currentUser instanceof Student))
+            throw new IllegalArgumentException("Student login required.");
+        return (Student) currentUser;
     }
 
-    // Register a student. Approval is required before login.
-    public boolean registerStudent(String id, String name, String email,
-                                   String phone, String password) {
-        lastError = "";
+    private void requireAdministrator() {
+        if (!(currentUser instanceof Administrator))
+            throw new IllegalArgumentException("Administrator login required.");
+    }
 
+    // Registration creates a request, not an approved account.
+    public void registerStudent(String id, String name, String email,
+                                String phone, String password) throws IOException {
         if (!filled(id) || !filled(name) || !filled(email)
-                || !filled(phone) || !filled(password)) {
-            return fail("All fields are required.");
-        }
+                || !filled(phone) || !filled(password))
+            throw new IllegalArgumentException("All fields are required.");
 
-        for (int i = 0; i < id.length(); i++) {
-            if (id.charAt(i) < '0' || id.charAt(i) > '9') {
-                return fail("University ID must contain digits only.");
-            }
-        }
+        // University ID must contain digits only.
+        for (int i = 0; i < id.length(); i++)
+            if (id.charAt(i) < '0' || id.charAt(i) > '9')
+                throw new IllegalArgumentException(
+                        "University ID must contain digits only.");
 
+        // Basic email validation.
         int at = email.indexOf('@');
-        if (at <= 0 || at >= email.length() - 1
-                || email.substring(at + 1).indexOf('@') != -1
-                || email.substring(at + 1).indexOf('.') <= 0) {
-            return fail("Invalid email address.");
-        }
+        if (at < 1 || email.indexOf('.', at + 1) <= at + 1
+                || email.substring(at + 1).indexOf('@') >= 0)
+            throw new IllegalArgumentException("Invalid email.");
 
+        // Basic phone validation.
         int digits = 0;
         for (int i = 0; i < phone.length(); i++) {
             char c = phone.charAt(i);
-
-            if (c >= '0' && c <= '9') {
-                digits++;
-            } else if (c != '+' && c != '-' && c != ' '
-                    && c != '(' && c != ')') {
-                return fail("Invalid phone number.");
-            }
+            if (c >= '0' && c <= '9') digits++;
+            else if (c != '+' && c != '-' && c != ' '
+                    && c != '(' && c != ')')
+                throw new IllegalArgumentException("Invalid phone number.");
         }
+        if (digits == 0)
+            throw new IllegalArgumentException("Phone must contain digits.");
 
-        if (digits == 0) {
-            return fail("Phone number must contain digits.");
-        }
+        // Prevent duplicate accounts and requests.
+        if (findUser(id) != null)
+            throw new IllegalArgumentException("Account already exists.");
 
-        if (storage.findStudent(id) != null
-                || storage.findRequest(id) != null) {
-            return fail("This university ID is already registered.");
-        }
+        for (AccessRequest request : requests)
+            if (id.equals(request.getUniversityId()))
+                throw new IllegalArgumentException(
+                        "University ID already requested.");
 
-        try {
-            storage.getRequests().add(
-                    new AccessRequest(id, name, email, phone, password));
-        } catch (IllegalArgumentException e) {
-            return fail(e.getMessage());
-        }
-
-        return true;
+        requests.add(new AccessRequest(id, name, email, phone, password));
+        save();
     }
 
-    // Authenticate either an administrator or an approved student.
-    public boolean login(String username, String password) {
-        lastError = "";
+    // User is a polymorphic reference to Student or Administrator.
+    public User login(String username, String password) {
+        if (currentUser != null)
+            throw new IllegalArgumentException("Log out first.");
 
-        if (currentUser != null) return fail("Log out first.");
-        if (username == null || password == null) {
-            return fail("Enter credentials.");
-        }
-
-        // Polymorphism: User can refer to Administrator or Student.
-        User user = storage.getAdministrator();
-
-        if (!username.equals(user.getUsername())) {
-            user = storage.findStudent(username);
-        }
-
-        if (user == null || !user.passwordMatches(password)) {
-            return fail("Invalid credentials or account not approved.");
-        }
+        User user = findUser(username);
+        if (user == null || password == null
+                || !user.passwordMatches(password))
+            throw new IllegalArgumentException(
+                    "Invalid credentials or account not approved.");
 
         currentUser = user;
-        return true;
+        return user;
     }
 
     public void logout() {
         currentUser = null;
-        lastError = "";
     }
 
-    // Approve a request with the default 100-minute allowance.
-    public boolean approveRequest(String id) {
-        return approveRequest(id, 100);
+    public User getCurrentUser() {
+        return currentUser;
     }
 
-    public boolean approveRequest(String id, int minutes) {
-        lastError = "";
-        if (!requireAdmin()) return false;
+    // Approve a student and record the initial GPU-minute allocation.
+    public void approveRequest(String id, int initialMinutes)
+            throws IOException {
+        requireAdministrator();
 
-        AccessRequest request = storage.findRequest(id);
+        if (initialMinutes < 0)
+            throw new IllegalArgumentException("Invalid allocation.");
 
-        if (request == null || !request.isPending()
-                || storage.findStudent(id) != null) {
-            return fail("Only a pending request can be approved.");
-        }
+        AccessRequest request = null;
+        for (AccessRequest r : requests)
+            if (r.getUniversityId().equals(id) && r.isPending())
+                request = r;
 
-        if (minutes < 0) {
-            return fail("Allocated minutes cannot be negative.");
-        }
+        if (request == null || findUser(id) != null)
+            throw new IllegalArgumentException("Pending request not found.");
 
-        Student student = new Student(
-                request.getUniversityId(), request.getName(),
-                request.getChosenPassword(), request.getPhone(),
-                request.getEmail());
+        // Student constructor follows UML order:
+        // id, name, email, phone, password.
+        Student student = new Student(id, request.getName(),
+                request.getEmail(), request.getPhone(),
+                request.getChosenPassword());
 
-        // Student.java must provide setAllowance(TimeAllowance).
-        student.setAllowance(new TimeAllowance(minutes, 0, 0));
+        student.getAllowance().addAdjustment(new AllowanceAdjustment(
+                initialMinutes, "Initial approval",
+                currentUser.getUsername(),
+                isClockInitialized() ? clock.getElapsedMinutes() : -1));
 
-        storage.getStudents().add(student);
+        users.add(student);
         request.markApproved();
-        return true;
+        save();
     }
 
-    public boolean rejectRequest(String id, String reason) {
-        lastError = "";
-        if (!requireAdmin()) return false;
+    public void rejectRequest(String id, String reason)
+            throws IOException {
+        requireAdministrator();
 
-        AccessRequest request = storage.findRequest(id);
-
-        if (request == null || !request.isPending()) {
-            return fail("Only a pending request can be rejected.");
-        }
-
-        request.markRejected(reason);
-        return true;
-    }
-
-    // Adjust a student's total allocation and record the change.
-    public boolean setAllocatedMinutes(String id, int total, String reason) {
-        lastError = "";
-        if (!requireAdmin()) return false;
-
-        Student student = storage.findStudent(id);
-
-        if (student == null || !filled(reason)) {
-            return fail("Student and reason required.");
-        }
-
-        TimeAllowance allowance = student.getAllowance();
-
-        if (total < 0
-                || (long) total < (long) allowance.getUsed()
-                        + allowance.getReserved()) {
-            return fail("Allocation cannot be below used plus reserved minutes.");
-        }
-
-        if (total == allowance.getAllocated()) {
-            return fail("Allocation has not changed.");
-        }
-
-        int change = total - allowance.getAllocated();
-        allowance.setAllocated(total);
-
-        int time = -1;
-        if (isClockInitialized()) {
-            time = storage.getClock().getElapsedMinutes();
-        }
-
-        // Record: student ID, change, reason, admin, simulated minute.
-        storage.getAdjustments().add(
-                new String[]{id, "" + change, reason, "admin", "" + time});
-
-        return true;
-    }
-
-    public boolean grantExtraTime(String id, int minutes, String reason) {
-        lastError = "";
-        if (!requireAdmin()) return false;
-
-        Student student = storage.findStudent(id);
-
-        if (student == null || minutes <= 0) {
-            return fail("Invalid student or amount.");
-        }
-
-        int total = student.getAllowance().getAllocated();
-
-        if (minutes > Integer.MAX_VALUE - total) {
-            return fail("Allocation too large.");
-        }
-
-        return setAllocatedMinutes(id, total + minutes, reason);
-    }
-
-    // Initialize the simulated date and time once.
-    public boolean initializeClock(int day, int month, int year,
-                                   int hour, int minute) {
-        lastError = "";
-        if (!requireAdmin()) return false;
-
-        if (isClockInitialized() || storage.getJobs().size() > 0) {
-            return fail("Clock already initialized; use Advance Minute.");
-        }
-
-        if (!storage.getClock().initialize(day, month, year, hour, minute)) {
-            return fail("Invalid date or time.");
-        }
-
-        return true;
-    }
-
-    // Submit a job and reserve its full duration.
-    // Returns the job ID, or -1 if submission fails.
-    public int submitJob(String title, String application,
-                         String description, String size) {
-        lastError = "";
-
-        if (!isStudent()) {
-            fail("Student login required.");
-            return -1;
-        }
-
-        if (!isClockInitialized()) {
-            fail("Initialize the clock first.");
-            return -1;
-        }
-
-        int minutes = durationFor(size);
-
-        if (!filled(title) || !filled(application)
-                || !filled(description) || minutes < 0) {
-            fail("Complete all job details and choose a valid task size.");
-            return -1;
-        }
-
-        TimeAllowance allowance = ((Student) currentUser).getAllowance();
-
-        // An exact allowance match is accepted.
-        if (minutes > allowance.getAvailable()) {
-            fail("Not enough available minutes.");
-            return -1;
-        }
-
-        int id = storage.nextJobId();
-        if (id < 1) {
-            fail("Job ID limit reached.");
-            return -1;
-        }
-
-        int now = storage.getClock().getElapsedMinutes();
-
-        // Avoid overflowing simulated execution times.
-        long latest = (long) now + minutes;
-
-        for (Job job : storage.getJobs()) {
-            if (job.getStatus().equals("Queued")
-                    || job.getStatus().equals("Running")) {
-                latest += job.getEstimatedDuration();
+        for (AccessRequest request : requests) {
+            if (request.getUniversityId().equals(id)
+                    && request.isPending()) {
+                request.markRejected(reason);
+                save();
+                return;
             }
         }
-
-        if (latest > Integer.MAX_VALUE) {
-            fail("Simulation time limit reached.");
-            return -1;
-        }
-
-        Job job = new Job(id, currentUser.getUsername(),
-                title, application, description, size, now);
-
-        storage.addJob(job);
-        allowance.setReserved(allowance.getReserved() + minutes);
-
-        // Scheduler assigns available GPUs in increasing ID order.
-        scheduler.dispatchWaitingJobs();
-        return id;
+        throw new IllegalArgumentException("Pending request not found.");
     }
 
-    // Release the reservation and charge actual execution time.
-    private void settle(Job job, int charge) {
-        TimeAllowance allowance =
-                storage.findStudent(job.getStudentId()).getAllowance();
+    // Administrators see any student; students see only themselves.
+    public Student findStudent(String id) {
+        if (currentUser == null
+                || (!(currentUser instanceof Administrator)
+                && !currentUser.getUsername().equals(id)))
+            throw new IllegalArgumentException("Access denied.");
 
-        allowance.setReserved(
-                allowance.getReserved() - job.getEstimatedDuration());
-
-        allowance.setUsed(allowance.getUsed() + charge);
+        User user = findUser(id);
+        if (user instanceof Student) return (Student) user;
+        return null;
     }
 
-    // Advance the simulation by one minute.
-    public boolean advanceMinute() {
-        lastError = "";
-        if (!requireAdmin()) return false;
+    public ArrayList<AccessRequest> getRequests() {
+        requireAdministrator();
 
-        if (!isClockInitialized()) {
-            return fail("Initialize the clock first.");
-        }
-
-        if (storage.getClock().getElapsedMinutes() == Integer.MAX_VALUE) {
-            return fail("Simulation time limit reached.");
-        }
-
-        // Remember which jobs were running before the clock advances.
-        Job[] runningBefore = new Job[4];
-
-        for (int i = 0; i < 4; i++) {
-            runningBefore[i] = storage.getGpus()[i].getCurrentJob();
-        }
-
-        scheduler.advanceMinute();
-
-        // Charge jobs that completed during this minute.
-        for (int i = 0; i < 4; i++) {
-            if (runningBefore[i] != null
-                    && runningBefore[i].getStatus().equals("Completed")) {
-                settle(runningBefore[i],
-                        runningBefore[i].getEstimatedDuration());
-            }
-        }
-
-        return true;
+        // Return a separate list instead of the internal list.
+        ArrayList<AccessRequest> copy = new ArrayList<AccessRequest>();
+        for (AccessRequest request : requests)
+            copy.add(request);
+        return copy;
     }
 
-    // Cancel a queued or running job with a recorded reason.
-    public boolean cancelJob(int jobId, String reason) {
-        lastError = "";
+    // Search jobs visible to the logged-in user.
+    public ArrayList<Job> getVisibleJobs(String search) {
+        if (currentUser == null)
+            throw new IllegalArgumentException("Login required.");
 
-        Job job = visibleJob(jobId);
-        if (job == null) return false;
+        String term = search == null ? "" : search.toLowerCase();
+        ArrayList<Job> visible = new ArrayList<Job>();
 
-        if (!filled(reason)) {
-            return fail("Cancellation reason required.");
+        for (Job job : jobs) {
+            if (!(currentUser instanceof Administrator)
+                    && !job.getOwnerId().equals(currentUser.getUsername()))
+                continue;
+
+            if (("" + job.getJobId()).indexOf(term) >= 0
+                    || job.getTitle().toLowerCase().indexOf(term) >= 0
+                    || job.getApplicationName().toLowerCase().indexOf(term) >= 0
+                    || job.getStatus().toLowerCase().indexOf(term) >= 0)
+                visible.add(job);
         }
-
-        String status = job.getStatus();
-
-        if (!status.equals("Queued") && !status.equals("Running")) {
-            return fail("Only queued or running jobs can be cancelled.");
-        }
-
-        int charge = 0;
-
-        // Queued cancellation is free; running cancellation charges runtime.
-        if (status.equals("Running")) {
-            charge = storage.getClock().getElapsedMinutes()
-                    - job.getStartTime();
-        }
-
-        scheduler.cancelJob(job, currentUser.getUsername(), reason);
-        settle(job, charge);
-        return true;
+        return visible;
     }
 
-    // Enforce student ownership when accessing jobs.
-    private Job visibleJob(int id) {
-        Job job = storage.findJob(id);
+    public Job getJobDetails(int jobId) {
+        if (currentUser == null)
+            throw new IllegalArgumentException("Login required.");
 
-        if (currentUser == null || job == null
-                || (!isAdministrator()
-                && !job.getStudentId().equals(currentUser.getUsername()))) {
-            fail("Job not found or access denied.");
-            return null;
-        }
+        Job job = findJob(jobId);
+
+        if (job == null || (!(currentUser instanceof Administrator)
+                && !job.getOwnerId().equals(currentUser.getUsername())))
+            throw new IllegalArgumentException(
+                    "Job not found or access denied.");
 
         return job;
     }
 
-    public int getQueuePosition(int id) {
-        Job job = visibleJob(id);
-        if (job == null) return -1;
+    // Calculate balances from adjustments and job records.
+    public int[] getBalance(String studentId) {
+        Student student = findStudent(studentId);
+        if (student == null)
+            throw new IllegalArgumentException("Student not found.");
 
-        if (!job.getStatus().equals("Queued")) return 0;
-        return scheduler.getQueuePosition(job);
+        TimeAllowance a = student.getAllowance();
+
+        // Order: allocated, used, reserved, available.
+        return new int[]{
+                a.getAllocatedMinutes(),
+                a.getUsedMinutes(jobs, studentId),
+                a.getReservedMinutes(jobs, studentId),
+                a.getAvailableMinutes(jobs, studentId)
+        };
     }
 
-    public int getPredictedStart(int id) {
-        Job job = visibleJob(id);
-        if (job == null) return -1;
+    public void grantMinutes(String id, int amount, String reason)
+            throws IOException {
+        requireAdministrator();
 
-        if (job.getStatus().equals("Queued")) {
+        if (amount <= 0)
+            throw new IllegalArgumentException("Grant must be positive.");
+
+        Student student = findStudent(id);
+        if (student == null)
+            throw new IllegalArgumentException("Student not found.");
+
+        long total = (long) student.getAllowance()
+                .getAllocatedMinutes() + amount;
+
+        if (total > Integer.MAX_VALUE)
+            throw new IllegalArgumentException("Allocation too large.");
+
+        setAllocatedMinutes(id, (int) total, reason);
+    }
+
+    public void setAllocatedMinutes(String id, int newTotal,
+                                    String reason) throws IOException {
+        requireAdministrator();
+
+        if (!filled(reason))
+            throw new IllegalArgumentException("Reason required.");
+
+        Student student = findStudent(id);
+        if (student == null)
+            throw new IllegalArgumentException("Student not found.");
+
+        int[] balance = getBalance(id);
+
+        // Do not reduce allocation below already used/reserved minutes.
+        if (newTotal < 0
+                || (long) newTotal < (long) balance[1] + balance[2])
+            throw new IllegalArgumentException(
+                    "Cannot reduce below used plus reserved.");
+
+        long delta = (long) newTotal - balance[0];
+
+        if (delta < Integer.MIN_VALUE || delta > Integer.MAX_VALUE)
+            throw new IllegalArgumentException("Adjustment too large.");
+
+        if (delta == 0) return;
+
+        student.getAllowance().addAdjustment(new AllowanceAdjustment(
+                (int) delta, reason, currentUser.getUsername(),
+                isClockInitialized() ? clock.getElapsedMinutes() : -1));
+        save();
+    }
+
+    // Initialize the simulation clock only once.
+    public void initializeClock(LocalDateTime selected)
+            throws IOException {
+        requireAdministrator();
+
+        if (selected == null || clock.isInitialized())
+            throw new IllegalArgumentException(
+                    "Choose a date/time only once.");
+
+        clock.initialize(selected);
+        save();
+    }
+
+    public boolean isClockInitialized() {
+        return clock.isInitialized();
+    }
+
+    public String getCurrentTimeText() {
+        if (!clock.isInitialized()) return "N/A";
+        return clock.formatMinute(clock.getElapsedMinutes());
+    }
+
+    public String formatMinute(int minute) {
+        if (!clock.isInitialized() || minute < 0) return "-";
+        return clock.formatMinute(minute);
+    }
+
+    // Submit a job if the student has enough available GPU minutes.
+    public Job submitJob(String title, String app, String description,
+                         String size) throws IOException {
+        Student student = requireStudent();
+
+        if (!clock.isInitialized())
+            throw new IllegalArgumentException("Initialize clock first.");
+
+        if (!filled(title) || !filled(app) || !filled(description))
+            throw new IllegalArgumentException("Complete all job fields.");
+
+        int duration;
+
+        if ("Small".equals(size)) duration = 5;
+        else if ("Medium".equals(size)) duration = 15;
+        else if ("Large".equals(size)) duration = 30;
+        else if ("Very large".equals(size)) duration = 60;
+        else throw new IllegalArgumentException("Invalid task size.");
+
+        if (!student.getAllowance().canSubmit(
+                duration, jobs, student.getUsername()))
+            throw new IllegalArgumentException(
+                    "Insufficient available minutes.");
+
+        if (nextJobId == Integer.MAX_VALUE)
+            throw new IllegalArgumentException("Job ID limit reached.");
+
+        Job job = new Job(nextJobId, student.getUsername(),
+                title, app, description, size,
+                clock.getElapsedMinutes());
+
+        nextJobId++;
+
+        // Submission times never go backwards.
+        // Increasing IDs break ties for FCFS scheduling.
+        jobs.add(job);
+
+        scheduler.dispatchWaitingJobs();
+        save();
+        return job;
+    }
+
+    // Advance all GPU jobs by exactly one simulated minute.
+    public void advanceMinute() throws IOException {
+        requireAdministrator();
+
+        if (!clock.isInitialized())
+            throw new IllegalArgumentException("Initialize clock first.");
+
+        if (clock.getElapsedMinutes() == Integer.MAX_VALUE)
+            throw new IllegalArgumentException(
+                    "Simulation time limit reached.");
+
+        scheduler.advanceMinute();
+        save();
+    }
+
+    // Cancel a job after checking ownership and its current state.
+    public void cancelJob(int jobId, String reason)
+            throws IOException {
+        Job job = getJobDetails(jobId);
+
+        if (!filled(reason))
+            throw new IllegalArgumentException("Reason required.");
+
+        if (!currentUser.canCancel(job))
+            throw new IllegalArgumentException("Access denied.");
+
+        if (!"Queued".equals(job.getStatus())
+                && !"Running".equals(job.getStatus()))
+            throw new IllegalArgumentException(
+                    "Job cannot be cancelled.");
+
+        scheduler.cancelJob(job, currentUser.getUsername(), reason);
+        save();
+    }
+
+    // Queue and waiting-time calculations belong to Scheduler.
+    public int getQueuePosition(int jobId) {
+        return scheduler.getQueuePosition(getJobDetails(jobId));
+    }
+
+    public int getPredictedStartMinute(int jobId) {
+        Job job = getJobDetails(jobId);
+
+        if ("Queued".equals(job.getStatus()))
             return scheduler.predictStartMinute(job);
-        }
-        return job.getStartTime();
+
+        return job.getStartMinute();
     }
 
-    public int getPredictedFinish(int id) {
-        Job job = visibleJob(id);
-        if (job == null) return -1;
+    public int getPredictedFinishMinute(int jobId) {
+        Job job = getJobDetails(jobId);
 
-        if (job.getStatus().equals("Queued")) {
+        if ("Queued".equals(job.getStatus()))
             return scheduler.predictStartMinute(job)
                     + job.getEstimatedDuration();
-        }
 
-        if (job.getStatus().equals("Running")) {
-            return job.getStartTime() + job.getEstimatedDuration();
-        }
+        if ("Running".equals(job.getStatus()))
+            return job.getStartMinute() + job.getEstimatedDuration();
 
-        return job.getFinishTime();
+        return job.getFinishMinute();
     }
 
-    public int getRemainingWait(int id) {
-        Job job = visibleJob(id);
-        if (job == null) return -1;
+    public int getRemainingWait(int jobId) {
+        Job job = getJobDetails(jobId);
 
-        if (!job.getStatus().equals("Queued")) return 0;
-
-        return getPredictedStart(id)
-                - storage.getClock().getElapsedMinutes();
+        if (!"Queued".equals(job.getStatus())) return 0;
+        return scheduler.getRemainingWait(job);
     }
 
-    // Runtime excludes all time spent waiting in the queue.
-    private int runtime(Job job) {
-        if (job.getStartTime() < 0) return 0;
-
-        int end = job.getFinishTime();
-
-        if (job.getStatus().equals("Running")) {
-            end = storage.getClock().getElapsedMinutes();
-        }
-
-        return end - job.getStartTime();
-    }
-
-    public int getRuntime(int id) {
-        Job job = visibleJob(id);
-        if (job == null) return -1;
-        return runtime(job);
-    }
-
-    public int getChargedMinutes(int id) {
-        Job job = visibleJob(id);
-        if (job == null) return -1;
-
-        if (job.getStatus().equals("Completed")
-                || job.getStatus().equals("Cancelled")) {
-            return runtime(job);
-        }
-        return 0;
-    }
-
-    public int getTotalQueueWait(int id) {
-        Job job = visibleJob(id);
-        if (job == null) return -1;
-
-        if (job.getStartTime() >= 0) {
-            return job.getStartTime() - job.getSubmissionTime();
-        }
-
-        if (job.getStatus().equals("Cancelled")) {
-            return job.getCancellationTime() - job.getSubmissionTime();
-        }
-
-        return storage.getClock().getElapsedMinutes()
-                - job.getSubmissionTime();
-    }
-
-    // Return job information as copies for the Swing tables.
-    public ArrayList<String[]> getJobRows() {
-        ArrayList<String[]> rows = new ArrayList<String[]>();
-
-        if (currentUser == null) {
-            fail("Login required.");
-            return rows;
-        }
-
-        for (Job job : storage.getJobs()) {
-            if (!isAdministrator()
-                    && !job.getStudentId().equals(currentUser.getUsername())) {
-                continue;
-            }
-
-            int id = job.getJobId();
-
-            rows.add(new String[]{
-                    "" + id,
-                    job.getStudentId(),
-                    job.getTitle(),
-                    job.getApplicationName(),
-                    job.getDescription(),
-                    job.getTaskSize(),
-                    "" + job.getEstimatedDuration(),
-                    job.getStatus(),
-                    "" + job.getAssignedGpuId(),
-                    formatMinute(job.getSubmissionTime()),
-                    formatMinute(job.getStartTime()),
-                    formatMinute(job.getFinishTime()),
-                    "" + getQueuePosition(id),
-                    formatMinute(getPredictedStart(id)),
-                    formatMinute(getPredictedFinish(id)),
-                    "" + getRemainingWait(id),
-                    "" + runtime(job),
-                    "" + getChargedMinutes(id),
-                    formatMinute(job.getCancellationTime()),
-                    job.getCancelledBy(),
-                    job.getCancellationReason(),
-                    job.getResult(),
-                    "" + getTotalQueueWait(id)
-            });
-        }
-
-        return rows;
-    }
-
-    // Search visible jobs by ID, title, application or status.
-    public ArrayList<String[]> searchJobs(String text) {
-        ArrayList<String[]> found = new ArrayList<String[]>();
-        if (text == null) return found;
-
-        String needle = text.toLowerCase();
-
-        for (String[] row : getJobRows()) {
-            if (row[0].indexOf(needle) >= 0
-                    || row[2].toLowerCase().indexOf(needle) >= 0
-                    || row[3].toLowerCase().indexOf(needle) >= 0
-                    || row[7].toLowerCase().indexOf(needle) >= 0) {
-                found.add(row);
-            }
-        }
-
-        return found;
-    }
-
-    // Students see only their own balance; admins see every student.
-    public ArrayList<String[]> getStudentRows() {
-        ArrayList<String[]> rows = new ArrayList<String[]>();
-
-        if (currentUser == null) {
-            fail("Login required.");
-            return rows;
-        }
-
-        for (Student student : storage.getStudents()) {
-            if (!isAdministrator()
-                    && !student.getUsername().equals(currentUser.getUsername())) {
-                continue;
-            }
-
-            TimeAllowance a = student.getAllowance();
-
-            rows.add(new String[]{
-                    student.getUsername(), student.getName(),
-                    student.getEmail(), student.getPhone(),
-                    "" + a.getAllocated(), "" + a.getUsed(),
-                    "" + a.getReserved(), "" + a.getAvailable()
-            });
-        }
-
-        return rows;
-    }
-
-    public ArrayList<String[]> searchStudents(String id) {
-        ArrayList<String[]> found = new ArrayList<String[]>();
-        if (!requireAdmin() || id == null) return found;
-
-        for (String[] row : getStudentRows()) {
-            if (row[0].indexOf(id) >= 0) {
-                found.add(row);
-            }
-        }
-
-        return found;
-    }
-
-    // Registration requests are visible to the administrator only.
-    public ArrayList<String[]> getRequestRows() {
-        ArrayList<String[]> rows = new ArrayList<String[]>();
-        if (!requireAdmin()) return rows;
-
-        for (AccessRequest r : storage.getRequests()) {
-            rows.add(new String[]{
-                    r.getUniversityId(), r.getName(),
-                    r.getEmail(), r.getPhone(),
-                    r.getChosenPassword(), r.getStatus(),
-                    r.getRejectionReason()
-            });
-        }
-
-        return rows;
-    }
-
-    // Show the history of allowance changes.
-    public ArrayList<String[]> getAdjustmentRows() {
-        ArrayList<String[]> rows = new ArrayList<String[]>();
-        if (!requireAdmin()) return rows;
-
-        for (String[] a : storage.getAdjustments()) {
-            rows.add(new String[]{
-                    a[0], a[1], a[2], a[3],
-                    formatMinute(Integer.parseInt(a[4]))
-            });
-        }
-
-        return rows;
-    }
-
-    // GPU dashboard: ID, availability, current job, remaining, finish.
-    public ArrayList<String[]> getGpuRows() {
-        ArrayList<String[]> rows = new ArrayList<String[]>();
-        if (!requireAdmin()) return rows;
-
-        for (GPU gpu : storage.getGpus()) {
-            Job job = gpu.getCurrentJob();
-
-            if (job == null) {
-                rows.add(new String[]{
-                        "" + gpu.getGpuId(), "Free", "-", "0", "-"
-                });
-            } else {
-                rows.add(new String[]{
-                        "" + gpu.getGpuId(),
-                        "Busy",
-                        "" + job.getJobId(),
-                        "" + (job.getEstimatedDuration() - runtime(job)),
-                        formatMinute(gpu.getExpectedFinishMinute())
-                });
-            }
-        }
-
-        return rows;
-    }
-
-    // Counts: Queued, Running, Completed, Cancelled.
+    // Counts: queued, running, completed, cancelled.
     public int[] getJobCounts() {
+        if (currentUser == null)
+            throw new IllegalArgumentException("Login required.");
+
         int[] counts = new int[4];
-        if (currentUser == null) return counts;
 
-        for (Job job : storage.getJobs()) {
-            if (!isAdministrator()
-                    && !job.getStudentId().equals(currentUser.getUsername())) {
-                continue;
-            }
-
-            if (job.getStatus().equals("Queued")) counts[0]++;
-            else if (job.getStatus().equals("Running")) counts[1]++;
-            else if (job.getStatus().equals("Completed")) counts[2]++;
-            else if (job.getStatus().equals("Cancelled")) counts[3]++;
+        for (Job job : getVisibleJobs("")) {
+            if ("Queued".equals(job.getStatus())) counts[0]++;
+            else if ("Running".equals(job.getStatus())) counts[1]++;
+            else if ("Completed".equals(job.getStatus())) counts[2]++;
+            else if ("Cancelled".equals(job.getStatus())) counts[3]++;
         }
 
         return counts;
     }
 
     public int getBusyGpuCount() {
-        if (!requireAdmin()) return -1;
+        requireAdministrator();
 
-        int count = 0;
-        for (GPU gpu : storage.getGpus()) {
-            if (!gpu.isAvailable()) count++;
-        }
-        return count;
+        int busy = 0;
+        for (GPU gpu : gpus)
+            if (!gpu.isAvailable()) busy++;
+
+        return busy;
     }
 
-    // Total busy GPU minutes divided by total available GPU minutes.
-    public double getUtilization() {
-        if (!requireAdmin()) return -1;
+    // Return GPU information for the administrator dashboard.
+    public String getGpuSummary() {
+        requireAdministrator();
 
-        int elapsed = storage.getClock().getElapsedMinutes();
-        if (elapsed == 0) return -1; // GUI should display N/A.
+        String summary = "";
 
-        long busyMinutes = 0;
+        for (GPU gpu : gpus) {
+            Job job = gpu.getCurrentJob();
 
-        for (Job job : storage.getJobs()) {
-            busyMinutes += runtime(job);
-        }
+            summary += "GPU " + gpu.getGpuId() + ": ";
 
-        return 100.0 * busyMinutes / (4.0 * elapsed);
-    }
-
-    public String getCurrentTime() {
-        if (!isClockInitialized()) return "Not initialized";
-        return formatMinute(storage.getClock().getElapsedMinutes());
-    }
-
-    // Convert simulated minutes to dd/MM/yyyy HH:mm.
-    public String formatMinute(int offset) {
-        if (!isClockInitialized() || offset < 0) return "-";
-
-        SimulationClock c = storage.getClock();
-
-        int day = c.getDay();
-        int month = c.getMonth();
-        int year = c.getYear();
-
-        long total = (long) c.getHour() * 60 + c.getMinute() + offset;
-
-        int hour = (int) ((total / 60) % 24);
-        int minute = (int) (total % 60);
-        long days = total / 1440;
-
-        while (days > 0) {
-            int remaining = daysInMonth(month, year) - day;
-
-            if (days <= remaining) {
-                day += (int) days;
-                days = 0;
+            if (job == null) {
+                summary += "Free\n";
             } else {
-                days -= remaining + 1;
-                day = 1;
-                month++;
-
-                if (month == 13) {
-                    month = 1;
-                    year++;
-                }
+                summary += "Job " + job.getJobId()
+                        + ", remaining "
+                        + gpu.getRemainingMinutes(
+                                clock.getElapsedMinutes())
+                        + ", finish "
+                        + formatMinute(gpu.getExpectedFinishMinute())
+                        + "\n";
             }
         }
 
-        return two(day) + "/" + two(month) + "/" + year
-                + " " + two(hour) + ":" + two(minute);
+        return summary;
     }
 
-    private String two(int number) {
-        if (number < 10) return "0" + number;
-        return "" + number;
+    // Busy GPU minutes divided by four times elapsed minutes.
+    public double getUtilizationPercent() {
+        requireAdministrator();
+
+        int elapsed = clock.getElapsedMinutes();
+        if (elapsed == 0) return -1; // N/A at time zero.
+
+        long busy = 0;
+
+        for (Job job : jobs)
+            busy += job.getExecutedMinutes(elapsed);
+
+        return 100.0 * busy / (4.0 * elapsed);
     }
 
-    private int daysInMonth(int month, int year) {
-        if (month == 2) {
-            if (year % 400 == 0
-                    || (year % 4 == 0 && year % 100 != 0)) {
-                return 29;
+    // Package-access methods used only by FileManager.
+    ArrayList<User> getUsersForStorage() { return users; }
+    ArrayList<AccessRequest> getRequestsForStorage() { return requests; }
+    ArrayList<Job> getJobsForStorage() { return jobs; }
+    GPU[] getGpusForStorage() { return gpus; }
+    SimulationClock getClockForStorage() { return clock; }
+    int getNextJobIdForStorage() { return nextJobId; }
+
+    // Stage loaded data first.
+    // Replace live data only after validation succeeds.
+    void restoreData(ArrayList<User> loadedUsers,
+                     ArrayList<AccessRequest> loadedRequests,
+                     ArrayList<Job> loadedJobs,
+                     int[] gpuJobIds,
+                     LocalDateTime initial,
+                     int elapsed, boolean ready, int nextId) {
+
+        if (loadedUsers == null || loadedRequests == null
+                || loadedJobs == null || gpuJobIds == null
+                || gpuJobIds.length != 4 || nextId < 1)
+            throw new IllegalArgumentException("Invalid saved data.");
+
+        GpuSystem candidate = new GpuSystem(storage);
+
+        candidate.users = loadedUsers;
+        candidate.requests = loadedRequests;
+        candidate.jobs = loadedJobs;
+        candidate.nextJobId = nextId;
+        candidate.clock.restore(initial, elapsed, ready);
+        candidate.scheduler = new Scheduler(
+                candidate.jobs, candidate.gpus, candidate.clock);
+
+        // Reconnect running jobs to their GPUs.
+        for (int i = 0; i < 4; i++) {
+            if (gpuJobIds[i] == -1) continue;
+
+            Job job = candidate.findJob(gpuJobIds[i]);
+
+            if (job == null || !"Running".equals(job.getStatus())
+                    || job.getGpuId() != i + 1)
+                throw new IllegalArgumentException(
+                        "Invalid GPU assignment.");
+
+            candidate.gpus[i].assignJob(job);
+        }
+
+        candidate.validateLoadedState();
+
+        // All checks passed: replace the application's data.
+        users = candidate.users;
+        requests = candidate.requests;
+        jobs = candidate.jobs;
+        gpus = candidate.gpus;
+        clock = candidate.clock;
+        scheduler = candidate.scheduler;
+        nextJobId = candidate.nextJobId;
+        currentUser = null;
+    }
+
+    // Basic checks prevent corrupted saved records becoming live data.
+    private void validateLoadedState() {
+        if (!clock.isInitialized() && jobs.size() > 0)
+            throw new IllegalArgumentException(
+                    "Jobs require an initialized clock.");
+
+        if (clock.getElapsedMinutes() < 0)
+            throw new IllegalArgumentException("Invalid simulation time.");
+
+        int admins = 0;
+
+        // Validate users and prevent duplicate usernames.
+        for (int i = 0; i < users.size(); i++) {
+            User user = users.get(i);
+
+            if (user == null || !filled(user.getUsername()))
+                throw new IllegalArgumentException("Invalid account.");
+
+            if (user instanceof Administrator) admins++;
+
+            for (int j = 0; j < i; j++)
+                if (user.getUsername().equals(
+                        users.get(j).getUsername()))
+                    throw new IllegalArgumentException(
+                            "Duplicate account.");
+        }
+
+        if (admins != 1)
+            throw new IllegalArgumentException(
+                    "One administrator required.");
+
+        // Validate registration requests.
+        for (int i = 0; i < requests.size(); i++) {
+            AccessRequest request = requests.get(i);
+
+            if (request == null)
+                throw new IllegalArgumentException("Invalid request.");
+
+            for (int j = 0; j < i; j++)
+                if (request.getUniversityId().equals(
+                        requests.get(j).getUniversityId()))
+                    throw new IllegalArgumentException(
+                            "Duplicate request.");
+
+            boolean approved = "Approved".equals(request.getStatus());
+            boolean hasAccount = findUser(
+                    request.getUniversityId()) instanceof Student;
+
+            if (approved != hasAccount)
+                throw new IllegalArgumentException(
+                        "Request and account do not match.");
+        }
+
+        // Validate student allowances and approvals.
+        for (User user : users) {
+            if (user instanceof Student) {
+                Student student = (Student) user;
+
+                if (student.getAllowance() == null)
+                    throw new IllegalArgumentException(
+                            "Missing allowance.");
+
+                int[] balance = new int[]{
+                        student.getAllowance().getAllocatedMinutes(),
+                        student.getAllowance().getUsedMinutes(
+                                jobs, user.getUsername()),
+                        student.getAllowance().getReservedMinutes(
+                                jobs, user.getUsername()),
+                        student.getAllowance().getAvailableMinutes(
+                                jobs, user.getUsername())
+                };
+
+                if (balance[0] < 0 || balance[1] < 0
+                        || balance[2] < 0 || balance[3] < 0)
+                    throw new IllegalArgumentException(
+                            "Invalid allowance.");
+
+                boolean approved = false;
+
+                for (AccessRequest request : requests)
+                    if (request.getUniversityId().equals(
+                            user.getUsername())
+                            && "Approved".equals(request.getStatus()))
+                        approved = true;
+
+                if (!approved)
+                    throw new IllegalArgumentException(
+                            "Approval record missing.");
             }
-            return 28;
         }
 
-        if (month == 4 || month == 6
-                || month == 9 || month == 11) {
-            return 30;
+        // Validate jobs and FCFS ordering.
+        for (int i = 0; i < jobs.size(); i++) {
+            Job job = jobs.get(i);
+
+            if (job == null || job.getJobId() < 1
+                    || job.getJobId() >= nextJobId
+                    || !(findUser(job.getOwnerId()) instanceof Student)
+                    || job.getSubmissionMinute() < 0
+                    || job.getSubmissionMinute() > clock.getElapsedMinutes())
+                throw new IllegalArgumentException("Invalid job.");
+
+            for (int j = 0; j < i; j++)
+                if (job.getJobId() == jobs.get(j).getJobId())
+                    throw new IllegalArgumentException(
+                            "Duplicate job ID.");
+
+            if (i > 0 && (job.getSubmissionMinute()
+                    < jobs.get(i - 1).getSubmissionMinute()
+                    || (job.getSubmissionMinute()
+                    == jobs.get(i - 1).getSubmissionMinute()
+                    && job.getJobId()
+                    < jobs.get(i - 1).getJobId())))
+                throw new IllegalArgumentException(
+                        "Jobs are not in FCFS order.");
+
+            if ("Running".equals(job.getStatus())) {
+                int id = job.getGpuId();
+
+                if (id < 1 || id > 4
+                        || gpus[id - 1].getCurrentJob() != job)
+                    throw new IllegalArgumentException(
+                            "Running job has no GPU.");
+
+            } else if ("Queued".equals(job.getStatus())) {
+                if (job.getGpuId() != -1)
+                    throw new IllegalArgumentException(
+                            "Queued job has a GPU.");
+
+            } else if (!"Completed".equals(job.getStatus())
+                    && !"Cancelled".equals(job.getStatus())) {
+                throw new IllegalArgumentException(
+                        "Unknown job status.");
+            }
         }
 
-        return 31;
-    }
+        // Validate the four GPU assignments.
+        for (int i = 0; i < 4; i++) {
+            if (gpus[i].getGpuId() != i + 1)
+                throw new IllegalArgumentException("Invalid GPU ID.");
 
-    // Save the complete simulation.
-    public boolean save() {
-        lastError = "";
+            Job running = gpus[i].getCurrentJob();
 
-        try {
-            fileManager.save(storage);
-            return true;
-        } catch (FileNotFoundException e) {
-            return fail("Cannot save file: " + e.getMessage());
-        } catch (RuntimeException e) {
-            return fail("Cannot save data: " + e.getMessage());
-        }
-    }
+            if (running == null) {
+                for (Job job : jobs)
+                    if ("Queued".equals(job.getStatus()))
+                        throw new IllegalArgumentException(
+                                "Queued job while GPU is free.");
 
-    // Restore data and reconnect the Scheduler to the restored objects.
-    public boolean load() {
-        lastError = "";
-
-        if (isStudent()) {
-            return fail("Log out before loading data.");
-        }
-
-        try {
-            Storage loaded = fileManager.load();
-
-            storage = loaded;
-            scheduler = new Scheduler(
-                    storage.getJobs(), storage.getGpus(), storage.getClock());
-
-            currentUser = null;
-            return true;
-
-        } catch (FileNotFoundException e) {
-            return fail("Cannot open save file: " + e.getMessage());
-        } catch (RuntimeException e) {
-            return fail("Invalid save file: " + e.getMessage());
+            } else if (!"Running".equals(running.getStatus())) {
+                throw new IllegalArgumentException(
+                        "GPU is not running a valid job.");
+            }
         }
     }
 }
