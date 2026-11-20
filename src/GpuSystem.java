@@ -387,19 +387,24 @@ public class GpuSystem {
 
     // Advance all GPU jobs by exactly one simulated minute.
     public void advanceMinute() throws IOException {
-        requireAdministrator();
 
-        if (!clock.isInitialized())
+        if (currentUser == null) {
+            throw new IllegalArgumentException("Login required.");
+        }
+
+        if (!clock.isInitialized()) {
             throw new IllegalArgumentException("Initialize clock first.");
+        }
 
-        if (clock.getElapsedMinutes() == Integer.MAX_VALUE)
+        if (clock.getElapsedMinutes() == Integer.MAX_VALUE) {
             throw new IllegalArgumentException(
-                    "Simulation time limit reached.");
+                "Simulation time limit reached."
+            );
+        }
 
         scheduler.advanceMinute();
         save();
     }
-
     // Cancel a job after checking ownership and its current state.
     public void cancelJob(int jobId, String reason)
             throws IOException {
