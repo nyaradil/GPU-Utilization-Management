@@ -14,8 +14,7 @@ public class AdminFrame extends JFrame implements ActionListener {
     private JTextField initialMinutesField;
     private JTextField studentIdField;
     private JTextField minutesField;
-    private JTextArea adjustmentReasonArea;
-    private JTextArea cancellationReasonArea;
+    private JTextArea reasonArea;
     private JTextField jobIdField;
     private JTextArea dashboardArea;
     private JSpinner datePicker;
@@ -42,16 +41,13 @@ public class AdminFrame extends JFrame implements ActionListener {
         initialMinutesField = new JTextField("100", 10);
         studentIdField = new JTextField(15);
         minutesField = new JTextField(10);
-        adjustmentReasonArea = new JTextArea(4, 20);
-        cancellationReasonArea = new JTextArea(4, 20);
+        reasonArea = new JTextArea(3, 35);
         jobIdField = new JTextField(10);
         dashboardArea = new JTextArea();
 
         dashboardArea.setEditable(false);
-        adjustmentReasonArea.setLineWrap(true);
-        adjustmentReasonArea.setWrapStyleWord(true);
-        cancellationReasonArea.setLineWrap(true);
-        cancellationReasonArea.setWrapStyleWord(true);
+        reasonArea.setLineWrap(true);
+        reasonArea.setWrapStyleWord(true);
         
         // Create spinners for selecting the initial simulation date and time (add up and down arrows to allow the user to control date and time)
         datePicker = new JSpinner(new SpinnerDateModel());
@@ -110,8 +106,6 @@ public class AdminFrame extends JFrame implements ActionListener {
         studentPanel.add(minutesField);
         studentPanel.add(grantButton);
         studentPanel.add(setAllocationButton);
-        studentPanel.add(new JLabel("Reason:"));
-        studentPanel.add(new JScrollPane(adjustmentReasonArea));
         tabs.addTab("Student Management", studentPanel);
         
         // Simulation Controls tab
@@ -128,8 +122,6 @@ public class AdminFrame extends JFrame implements ActionListener {
         JPanel cancellationPanel = new JPanel(new GridLayout(0, 2, 10, 10));
         cancellationPanel.add(new JLabel("Job ID:"));
         cancellationPanel.add(jobIdField);
-        cancellationPanel.add(new JLabel("Cancellation Reason:"));
-        cancellationPanel.add(new JScrollPane(cancellationReasonArea));
         cancellationPanel.add(cancelButton);
         tabs.addTab("Job Management", cancellationPanel);
         
@@ -139,8 +131,11 @@ public class AdminFrame extends JFrame implements ActionListener {
         dashboardPanel.add(refreshButton, BorderLayout.SOUTH);
         tabs.addTab("Dashboard", dashboardPanel);
         //Logout button
-        JPanel bottomPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT));
-        bottomPanel.add(logoutButton);
+        JPanel bottomPanel = new JPanel(new BorderLayout(5, 5));
+        bottomPanel.add(new JLabel("Reason for rejection, allocation, or cancellation:"),
+        BorderLayout.NORTH);
+        bottomPanel.add(new JScrollPane(reasonArea), BorderLayout.CENTER);
+        bottomPanel.add(logoutButton, BorderLayout.EAST);
         add(tabs, BorderLayout.CENTER);
         add(bottomPanel, BorderLayout.SOUTH);
         
@@ -230,16 +225,16 @@ public class AdminFrame extends JFrame implements ActionListener {
                 return;
             }
 
-            if (!system.approveRequest(id, minutes)) {
-                showError(system.getLastError());
-                return;
-            }
+            system.approveRequest(id, minutes);
             JOptionPane.showMessageDialog(this, "Registration request approved.");
 
             refreshView();
         }
         catch (NumberFormatException ex) {
             showError("Initial minutes must be a valid number.");
+        }catch (IOException ex) {
+        		refreshView();
+            showError(ex.getMessage() + " Use Logout or close to retry saving without repeating this operation.");
         }
         catch (Exception ex) {
             showError(ex.getMessage());
@@ -260,6 +255,10 @@ public class AdminFrame extends JFrame implements ActionListener {
             JOptionPane.showMessageDialog(this, "Registration request rejected.");
 
             refreshView();
+        }
+        catch (IOException ex) {
+        		refreshView();
+            showError(ex.getMessage() + " Use Logout or close to retry saving without repeating this operation.");
         }
         catch (Exception ex) {
             showError(ex.getMessage());
@@ -311,7 +310,7 @@ public class AdminFrame extends JFrame implements ActionListener {
         try {
             String id = studentIdField.getText().trim();
             int amount = Integer.parseInt(minutesField.getText().trim());
-            String reason = adjustmentReasonArea.getText().trim();
+            String reason = reasonArea.getText().trim();
             if (id.isEmpty() || amount <= 0 || reason.isEmpty()) {
                 showError("Enter a student ID, positive minutes, and a reason.");
                 return;
@@ -325,6 +324,10 @@ public class AdminFrame extends JFrame implements ActionListener {
         catch (NumberFormatException ex) {
             showError("Minutes must be a valid number.");
         }
+        catch (IOException ex) {
+    			refreshView();
+    			showError(ex.getMessage() + " Use Logout or close to retry saving without repeating this operation.");
+        }
         catch (Exception ex) {
             showError(ex.getMessage());
         }
@@ -335,7 +338,7 @@ public class AdminFrame extends JFrame implements ActionListener {
         try {
             String id = studentIdField.getText().trim();
             int newTotal = Integer.parseInt(minutesField.getText().trim());
-            String reason = adjustmentReasonArea.getText().trim();
+            String reason = reasonArea.getText().trim();
 
             if (id.isEmpty() || newTotal < 0 || reason.isEmpty()) {
                 showError("Enter a student ID, valid allocation, and a reason.");
@@ -350,6 +353,10 @@ public class AdminFrame extends JFrame implements ActionListener {
         catch (NumberFormatException ex) {
             showError("Minutes must be a valid number.");
         }
+        catch (IOException ex) {
+			refreshView();
+			showError(ex.getMessage() + " Use Logout or close to retry saving without repeating this operation.");
+        	}
         catch (Exception ex) {
             showError(ex.getMessage());
         }
@@ -378,6 +385,10 @@ public class AdminFrame extends JFrame implements ActionListener {
 
             refreshView();
         }
+        catch (IOException ex) {
+			refreshView();
+			showError(ex.getMessage() + " Use Logout or close to retry saving without repeating this operation.");
+        }
         catch (Exception ex) {
             showError(ex.getMessage());
         }
@@ -389,6 +400,10 @@ public class AdminFrame extends JFrame implements ActionListener {
             system.advanceMinute();
             refreshView();
         }
+        catch (IOException ex) {
+			refreshView();
+			showError(ex.getMessage() + " Use Logout or close to retry saving without repeating this operation.");
+        }
         catch (Exception ex) {
             showError(ex.getMessage());
         }
@@ -398,7 +413,7 @@ public class AdminFrame extends JFrame implements ActionListener {
     		// Cancel a job
         try {
             int id = Integer.parseInt(jobIdField.getText().trim());
-            String reason = cancellationReasonArea.getText().trim();
+            String reason = reasonArea.getText().trim();
 
             if (reason.isEmpty()) {
                 showError("Enter a cancellation reason.");
@@ -412,6 +427,10 @@ public class AdminFrame extends JFrame implements ActionListener {
         }
         catch (NumberFormatException ex) {
             showError("Job ID must be a valid number.");
+        }
+        catch (IOException ex) {
+			refreshView();
+			showError(ex.getMessage() + " Use Logout or close to retry saving without repeating this operation.");
         }
         catch (Exception ex) {
             showError(ex.getMessage());
