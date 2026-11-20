@@ -165,11 +165,12 @@ public int getPredictedFinishMinute(Job job) {
         return job.getFinishMinute();
 
     } else {
-        return -1;
+        return -1; 
     }
 }
 
 public int getRemainingWait(Job job) {
+
     if (!job.getStatus().equals("Queued")) {
         return -1;
     }
@@ -182,7 +183,8 @@ public int getRemainingWait(Job job) {
 
     return predictedStart - clock.getElapsedMinutes();
 }
-	
+
+
 private Job findFirstQueuedJob() {
     for (int i = 0; i < jobs.size(); i++) {
         Job job = jobs.get(i);
@@ -195,8 +197,11 @@ private Job findFirstQueuedJob() {
     return null;
 }
 
-private GPU findGpuById(int id) {
 
+
+
+
+private GPU findGpuById(int id) {
     for (int i = 0; i < gpus.length; i++) {
         if (gpus[i].getGpuId() == id) {
             return gpus[i];
@@ -207,6 +212,8 @@ private GPU findGpuById(int id) {
         "GPU not found: " + id
     );
 }
+	
+
 
 
 }
