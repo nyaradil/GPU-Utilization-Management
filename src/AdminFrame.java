@@ -31,6 +31,7 @@ public class AdminFrame extends JFrame implements ActionListener {
     private JButton cancelButton;
     private JButton refreshButton;
     private JButton logoutButton;
+    private JLabel simulationTimeLabel;
     
     public AdminFrame(GpuSystem system) {
     		this.system = system;
@@ -48,6 +49,7 @@ public class AdminFrame extends JFrame implements ActionListener {
         jobIdField = new JTextField(10);
         dashboardArea = new JTextArea();
         requestsArea = new JTextArea(12, 50);
+        simulationTimeLabel = new JLabel("Simulation time: N/A");
 
         dashboardArea.setEditable(false);
         requestsArea.setEditable(false);
@@ -129,7 +131,10 @@ public class AdminFrame extends JFrame implements ActionListener {
         simulationPanel.add(new JLabel("Select Initial Time:"));
         simulationPanel.add(timePicker);
         simulationPanel.add(initializeButton);
-        simulationPanel.add(advanceButton);
+        JPanel advancePanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        	advancePanel.add(advanceButton);
+        	advancePanel.add(simulationTimeLabel);
+        	simulationPanel.add(advancePanel);
         tabs.addTab("Simulation", simulationPanel);
         
         // Job Cancellation tab
@@ -194,6 +199,7 @@ public class AdminFrame extends JFrame implements ActionListener {
     public void refreshView() {
     		// Refresh dashboard information
         try {
+        		simulationTimeLabel.setText("Simulation time: " + system.getCurrentTimeText());
             String dashboard = "";
             dashboard += "SIMULATION TIME\n";
             dashboard += system.getCurrentTimeText() + "\n\n";
