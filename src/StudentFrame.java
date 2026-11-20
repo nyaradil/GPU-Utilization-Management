@@ -16,6 +16,7 @@ private JTextField jobIdField;
 private JTextArea balanceArea;
 private JTextArea jobsArea;
 private JButton submitButton;
+private JButton advanceButton;
 
 
 public StudentFrame(GpuSystem system) {
@@ -34,6 +35,12 @@ public StudentFrame(GpuSystem system) {
 
     balanceArea = new JTextArea(8, 22);
     jobsArea = new JTextArea(12, 55);
+    
+    advanceButton = new JButton("Advance Minute");
+
+    advanceButton.setToolTipText(
+        "Advances the shared simulation for all students."
+    );
 
     balanceArea.setEditable(false);
     jobsArea.setEditable(false);
@@ -100,6 +107,7 @@ public StudentFrame(GpuSystem system) {
     cancelPanel.add(new JLabel("Job ID:"));
     cancelPanel.add(jobIdField);
     cancelPanel.add(cancelButton);
+    cancelPanel.add(advanceButton);
     cancelPanel.add(logoutButton);
 
     JPanel bottomPanel = new JPanel(new GridLayout(2, 1));
@@ -136,6 +144,13 @@ public StudentFrame(GpuSystem system) {
             handleCancel();
         }
     });
+    
+    advanceButton.addActionListener(new ActionListener() {
+        @Override
+        public void actionPerformed(ActionEvent event) {
+            handleAdvanceMinute();
+        }
+    });
 
     logoutButton.addActionListener(new ActionListener() {
         @Override
@@ -168,6 +183,8 @@ private void refreshView() {
     submitButton.setEnabled(
         system.isClockInitialized() && balance[3] > 0
     );
+    
+    advanceButton.setEnabled(system.isClockInitialized());
 
     ArrayList<Job> visibleJobs =
         system.getVisibleJobs(searchField.getText().trim());
@@ -251,6 +268,30 @@ private void refreshView() {
 
     
     jobsArea.setCaretPosition(0);
+}
+
+private void handleAdvanceMinute() {
+
+    try {
+        system.advanceMinute();
+        refreshView();
+
+    } catch (IllegalArgumentException ex) {
+        showError(ex.getMessage());
+
+    } catch (IllegalStateException ex) {
+        showError(ex.getMessage());
+
+    } catch (IOException ex) {
+        refreshView();
+
+        showError(
+            "The changes could not be saved:\n"
+                + ex.getMessage()
+                + "\nCheck the current simulation time "
+                + "before advancing again."
+        );
+    }
 }
 
 private void handleChooseTaskSize() {
