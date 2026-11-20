@@ -17,6 +17,7 @@ private JTextArea balanceArea;
 private JTextArea jobsArea;
 private JButton submitButton;
 private JButton advanceButton;
+private JLabel simulationTimeLabel;
 
 
 public StudentFrame(GpuSystem system) {
@@ -41,6 +42,8 @@ public StudentFrame(GpuSystem system) {
     advanceButton.setToolTipText(
         "Advances the shared simulation for all students."
     );
+    
+    simulationTimeLabel = new JLabel("Simulation time: N/A");
 
     balanceArea.setEditable(false);
     jobsArea.setEditable(false);
@@ -108,6 +111,7 @@ public StudentFrame(GpuSystem system) {
     cancelPanel.add(jobIdField);
     cancelPanel.add(cancelButton);
     cancelPanel.add(advanceButton);
+    cancelPanel.add(simulationTimeLabel);
     cancelPanel.add(logoutButton);
 
     JPanel bottomPanel = new JPanel(new GridLayout(2, 1));
@@ -168,6 +172,10 @@ public StudentFrame(GpuSystem system) {
 
 
 private void refreshView() {
+	
+	simulationTimeLabel.setText(
+		    "Simulation time: " + system.getCurrentTimeText()
+		);
 
     String studentId = system.getCurrentUser().getUsername();
 
