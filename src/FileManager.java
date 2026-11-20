@@ -1,4 +1,3 @@
-
 import java.io.File;
 import java.io.IOException;
 import java.io.PrintWriter;
@@ -159,7 +158,7 @@ public class FileManager implements Storage {
     // Save a job and all its recorded execution details.
     private void writeJob(PrintWriter out, Job job) {
         out.println(job.getJobId());
-        writeText(out, job.getOwnerId());
+        writeText(out, job.getStudentId());
         writeText(out, job.getTitle());
         writeText(out, job.getApplicationName());
         writeText(out, job.getDescription());
@@ -168,7 +167,7 @@ public class FileManager implements Storage {
         out.println(job.getSubmissionMinute());
         writeText(out, job.getStatus());
 
-        out.println(job.getGpuId());
+        out.println(job.getAssignedGpuId());
         out.println(job.getStartMinute());
         out.println(job.getFinishMinute());
         out.println(job.getCancellationMinute());
@@ -289,7 +288,13 @@ public class FileManager implements Storage {
         if (system == null)
             throw new IllegalArgumentException("System required.");
 
-        Scanner in = new Scanner(new File(filePath));
+        File file = new File(filePath);
+
+        // A missing file is normal on the first launch. Keep the defaults.
+        // Existing files must still be read and validated successfully.
+        if (!file.exists()) return;
+
+        Scanner in = new Scanner(file);
 
         try {
             if (!"GPU_PROJECT_V4".equals(in.next()))

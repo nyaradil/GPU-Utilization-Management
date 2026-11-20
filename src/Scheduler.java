@@ -1,3 +1,4 @@
+import java.util.ArrayList;
 
 public class Scheduler {
 
@@ -196,43 +197,9 @@ private Job findFirstQueuedJob() {
     return null;
 }
 
-public int getPredictedFinishMinute(Job job) {
-    String status = job.getStatus();
 
-    if (status.equals("Queued")) {
-        int predictedStart = predictStartMinute(job);
 
-        if (predictedStart == -1) {
-            return -1;
-        }
 
-        return predictedStart + job.getEstimatedDuration();
-
-    } else if (status.equals("Running")) {
-        return job.getStartMinute()
-                + job.getEstimatedDuration();
-
-    } else if (status.equals("Completed")) {
-        return job.getFinishMinute();
-
-    } else {
-        return -1;
-    }
-}
-
-public int getRemainingWait(Job job) {
-    if (!job.getStatus().equals("Queued")) {
-        return -1;
-    }
-
-    int predictedStart = predictStartMinute(job);
-
-    if (predictedStart == -1) {
-        return -1;
-    }
-
-    return predictedStart - clock.getElapsedMinutes();
-}
 
 private GPU findGpuById(int id) {
     for (int i = 0; i < gpus.length; i++) {
@@ -246,18 +213,7 @@ private GPU findGpuById(int id) {
     );
 }
 	
-private GPU findGpuById(int id) {
 
-    for (int i = 0; i < gpus.length; i++) {
-        if (gpus[i].getGpuId() == id) {
-            return gpus[i];
-        }
-    }
-
-    throw new IllegalArgumentException(
-        "GPU not found: " + id
-    );
-}
 
 
 }

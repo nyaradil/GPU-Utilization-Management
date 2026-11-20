@@ -1,4 +1,3 @@
-
 import java.io.IOException;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -222,7 +221,7 @@ public class GpuSystem {
 
         for (Job job : jobs) {
             if (!(currentUser instanceof Administrator)
-                    && !job.getOwnerId().equals(currentUser.getUsername()))
+                    && !job.getStudentId().equals(currentUser.getUsername()))
                 continue;
 
             if (("" + job.getJobId()).indexOf(term) >= 0
@@ -241,7 +240,7 @@ public class GpuSystem {
         Job job = findJob(jobId);
 
         if (job == null || (!(currentUser instanceof Administrator)
-                && !job.getOwnerId().equals(currentUser.getUsername())))
+                && !job.getStudentId().equals(currentUser.getUsername())))
             throw new IllegalArgumentException(
                     "Job not found or access denied.");
 
@@ -436,23 +435,11 @@ public class GpuSystem {
     }
 
     public int getPredictedFinishMinute(int jobId) {
-        Job job = getJobDetails(jobId);
-
-        if ("Queued".equals(job.getStatus()))
-            return scheduler.predictStartMinute(job)
-                    + job.getEstimatedDuration();
-
-        if ("Running".equals(job.getStatus()))
-            return job.getStartMinute() + job.getEstimatedDuration();
-
-        return job.getFinishMinute();
+        return scheduler.getPredictedFinishMinute(getJobDetails(jobId));
     }
 
     public int getRemainingWait(int jobId) {
-        Job job = getJobDetails(jobId);
-
-        if (!"Queued".equals(job.getStatus())) return 0;
-        return scheduler.getRemainingWait(job);
+        return scheduler.getRemainingWait(getJobDetails(jobId));
     }
 
     // Counts: queued, running, completed, cancelled.
@@ -563,7 +550,7 @@ public class GpuSystem {
             Job job = candidate.findJob(gpuJobIds[i]);
 
             if (job == null || !"Running".equals(job.getStatus())
-                    || job.getGpuId() != i + 1)
+                    || job.getAssignedGpuId() != i + 1)
                 throw new IllegalArgumentException(
                         "Invalid GPU assignment.");
 
@@ -645,6 +632,27 @@ public class GpuSystem {
                     throw new IllegalArgumentException(
                             "Missing allowance.");
 
+                long allocated = 0;
+                for (AllowanceAdjustment adjustment :
+                        student.getAllowance().getAdjustments()) {
+                    if (adjustment == null
+                            || !(findUser(adjustment.getAdminUsername())
+                            instanceof Administrator)
+                            || adjustment.getRecordedMinute() < -1
+                            || adjustment.getRecordedMinute()
+                            > clock.getElapsedMinutes()
+                            || (!clock.isInitialized()
+                            && adjustment.getRecordedMinute() != -1))
+                        throw new IllegalArgumentException(
+                                "Invalid allowance adjustment.");
+
+                    allocated += adjustment.getMinutesDelta();
+                }
+
+                if (allocated < 0 || allocated > Integer.MAX_VALUE)
+                    throw new IllegalArgumentException(
+                            "Invalid allocated minutes.");
+
                 int[] balance = new int[]{
                         student.getAllowance().getAllocatedMinutes(),
                         student.getAllowance().getUsedMinutes(
@@ -680,7 +688,7 @@ public class GpuSystem {
 
             if (job == null || job.getJobId() < 1
                     || job.getJobId() >= nextJobId
-                    || !(findUser(job.getOwnerId()) instanceof Student)
+                    || !(findUser(job.getStudentId()) instanceof Student)
                     || job.getSubmissionMinute() < 0
                     || job.getSubmissionMinute() > clock.getElapsedMinutes())
                 throw new IllegalArgumentException("Invalid job.");
@@ -699,21 +707,70 @@ public class GpuSystem {
                 throw new IllegalArgumentException(
                         "Jobs are not in FCFS order.");
 
+            int now = clock.getElapsedMinutes();
+            int submitted = job.getSubmissionMinute();
+            int start = job.getStartMinute();
+            int finish = job.getFinishMinute();
+            int cancelled = job.getCancellationMinute();
+            int gpuId = job.getAssignedGpuId();
+            int duration = job.getEstimatedDuration();
+
+            if (start < -1 || finish < -1 || cancelled < -1
+                    || start > now || finish > now || cancelled > now)
+                throw new IllegalArgumentException(
+                        "Invalid job execution timestamps.");
+
+            if (!"Cancelled".equals(job.getStatus())
+                    && (cancelled != -1 || filled(job.getCancelledBy())
+                    || filled(job.getCancellationReason())))
+                throw new IllegalArgumentException(
+                        "Unexpected cancellation information.");
+
             if ("Running".equals(job.getStatus())) {
-                int id = job.getGpuId();
+                int id = job.getAssignedGpuId();
 
                 if (id < 1 || id > 4
-                        || gpus[id - 1].getCurrentJob() != job)
+                        || gpus[id - 1].getCurrentJob() != job
+                        || start < submitted || finish != -1
+                        || (long) start + duration <= now
+                        || (long) start + duration > Integer.MAX_VALUE)
                     throw new IllegalArgumentException(
-                            "Running job has no GPU.");
+                            "Invalid running job.");
 
             } else if ("Queued".equals(job.getStatus())) {
-                if (job.getGpuId() != -1)
+                if (gpuId != -1 || start != -1 || finish != -1)
                     throw new IllegalArgumentException(
-                            "Queued job has a GPU.");
+                            "Queued job has execution information.");
 
-            } else if (!"Completed".equals(job.getStatus())
-                    && !"Cancelled".equals(job.getStatus())) {
+            } else if ("Completed".equals(job.getStatus())) {
+                if (gpuId < 1 || gpuId > 4 || start < submitted
+                        || (long) finish - start != duration)
+                    throw new IllegalArgumentException(
+                            "Invalid completed job.");
+
+            } else if ("Cancelled".equals(job.getStatus())) {
+                User actor = findUser(job.getCancelledBy());
+
+                if (cancelled < submitted || !filled(job.getCancelledBy())
+                        || !filled(job.getCancellationReason())
+                        || (!(actor instanceof Administrator)
+                        && !job.getStudentId().equals(job.getCancelledBy())))
+                    throw new IllegalArgumentException(
+                            "Invalid cancellation information.");
+
+                if (start == -1) {
+                    if (gpuId != -1 || finish != -1)
+                        throw new IllegalArgumentException(
+                                "Queued cancellation has execution information.");
+                } else if (gpuId < 1 || gpuId > 4
+                        || start < submitted || cancelled < start
+                        || finish != cancelled
+                        || (long) finish - start >= duration) {
+                    throw new IllegalArgumentException(
+                            "Invalid running cancellation.");
+                }
+
+            } else {
                 throw new IllegalArgumentException(
                         "Unknown job status.");
             }

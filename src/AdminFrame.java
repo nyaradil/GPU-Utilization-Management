@@ -18,6 +18,7 @@ public class AdminFrame extends JFrame implements ActionListener {
     private JTextArea cancellationReasonArea;
     private JTextField jobIdField;
     private JTextArea dashboardArea;
+    private JTextArea requestsArea;
     private JSpinner datePicker;
     private JSpinner timePicker;
     private JButton initializeButton;
@@ -46,8 +47,10 @@ public class AdminFrame extends JFrame implements ActionListener {
         cancellationReasonArea = new JTextArea(4, 20);
         jobIdField = new JTextField(10);
         dashboardArea = new JTextArea();
+        requestsArea = new JTextArea(12, 50);
 
         dashboardArea.setEditable(false);
+        requestsArea.setEditable(false);
         adjustmentReasonArea.setLineWrap(true);
         adjustmentReasonArea.setWrapStyleWord(true);
         cancellationReasonArea.setLineWrap(true);
@@ -56,9 +59,11 @@ public class AdminFrame extends JFrame implements ActionListener {
         // Create spinners for selecting the initial simulation date and time (add up and down arrows to allow the user to control date and time)
         datePicker = new JSpinner(new SpinnerDateModel());
         timePicker = new JSpinner(new SpinnerDateModel());
-        Spinner.DateEditor dateEditor = new JSpinner.DateEditor(datePicker, "dd/MM/yyyy");
+        JSpinner.DateEditor dateEditor = new JSpinner.DateEditor(datePicker, "dd/MM/yyyy");
+        dateEditor.getFormat().setLenient(false);
         datePicker.setEditor(dateEditor);
         JSpinner.DateEditor timeEditor = new JSpinner.DateEditor(timePicker, "HH:mm");
+        timeEditor.getFormat().setLenient(false);
         timePicker.setEditor(timeEditor);
         
         //Initializing all buttons
@@ -98,7 +103,10 @@ public class AdminFrame extends JFrame implements ActionListener {
         requestPanel.add(initialMinutesField);
         requestPanel.add(approveButton);
         requestPanel.add(rejectButton);
-        tabs.addTab("Registration Requests", requestPanel);
+        JPanel requestsTab = new JPanel(new BorderLayout(10, 10));
+        requestsTab.add(requestPanel, BorderLayout.NORTH);
+        requestsTab.add(new JScrollPane(requestsArea), BorderLayout.CENTER);
+        tabs.addTab("Registration Requests", requestsTab);
         
         // Student Management tab
         JPanel studentPanel = new JPanel(new GridLayout(0, 2, 10, 10));
@@ -207,7 +215,92 @@ public class AdminFrame extends JFrame implements ActionListener {
                 dashboard += "Utilization: " + utilization + "%\n";
             }
 
-            dashboard += "\nPending and Other Requests: " + system.getRequests().size() + "\n";
+            ArrayList<AccessRequest> requests = system.getRequests();
+            dashboard += "\nRegistration requests: " + requests.size() + "\n";
+
+            String requestDetails = "";
+            dashboard += "\nSTUDENT BALANCES\n";
+
+            for (AccessRequest request : requests) {
+                requestDetails += "University ID: " + request.getUniversityId()
+                        + "\nName: " + request.getName()
+                        + "\nEmail: " + request.getEmail()
+                        + "\nPhone: " + request.getPhone()
+                        + "\nChosen password: " + request.getChosenPassword()
+                        + "\nStatus: " + request.getStatus() + "\n";
+
+                if (request.getStatus().equals("Rejected"))
+                    requestDetails += "Rejection reason: "
+                            + request.getRejectionReason() + "\n";
+
+                requestDetails += "\n";
+
+                if (request.getStatus().equals("Approved")) {
+                    int[] balance = system.getBalance(request.getUniversityId());
+                    dashboard += request.getUniversityId()
+                            + " | Allocated: " + balance[0]
+                            + " | Used: " + balance[1]
+                            + " | Reserved: " + balance[2]
+                            + " | Available: " + balance[3] + "\n";
+                }
+            }
+
+            requestsArea.setText(requests.isEmpty()
+                    ? "No registration requests." : requestDetails);
+
+            dashboard += "\nALL JOBS\n";
+            ArrayList<Job> jobs = system.getVisibleJobs("");
+
+            if (jobs.isEmpty()) dashboard += "No jobs submitted.\n";
+
+            for (Job job : jobs) {
+                int jobId = job.getJobId();
+
+                dashboard += "Job " + jobId
+                        + " | Student: " + job.getStudentId()
+                        + " | Application: " + job.getApplicationName()
+                        + " | Status: " + job.getStatus() + "\n";
+
+                dashboard += "GPU: " + (job.getAssignedGpuId() == -1
+                        ? "Not assigned" : "" + job.getAssignedGpuId())
+                        + " | Submitted: "
+                        + system.formatMinute(job.getSubmissionMinute()) + "\n";
+
+                if (job.getStatus().equals("Queued")) {
+                    dashboard += "Queue position: " + system.getQueuePosition(jobId)
+                            + " | Predicted start: "
+                            + system.formatMinute(system.getPredictedStartMinute(jobId))
+                            + " | Predicted finish: "
+                            + system.formatMinute(system.getPredictedFinishMinute(jobId))
+                            + " | Remaining wait: " + system.getRemainingWait(jobId)
+                            + " minutes\n";
+                } else {
+                    dashboard += "Started: " + system.formatMinute(job.getStartMinute());
+
+                    if (job.getStatus().equals("Running")) {
+                        dashboard += " | Predicted finish: "
+                                + system.formatMinute(system.getPredictedFinishMinute(jobId));
+                    } else {
+                        dashboard += " | Execution ended: "
+                                + system.formatMinute(job.getFinishMinute())
+                                + " | Runtime: " + job.getChargeMinutes()
+                                + " | Queue wait: " + job.getTotalQueueWait()
+                                + " | Charged: " + job.getChargeMinutes()
+                                + "\nResult: " + job.getResultSummary();
+                    }
+
+                    dashboard += "\n";
+                }
+
+                if (job.getStatus().equals("Cancelled"))
+                    dashboard += "Cancelled at: "
+                            + system.formatMinute(job.getCancellationMinute())
+                            + " | By: " + job.getCancelledBy()
+                            + " | Reason: " + job.getCancellationReason() + "\n";
+
+                dashboard += "\n";
+            }
+
             dashboardArea.setText(dashboard);
             initializeButton.setEnabled(!system.isClockInitialized());
             advanceButton.setEnabled(system.isClockInitialized());
@@ -225,15 +318,12 @@ public class AdminFrame extends JFrame implements ActionListener {
             String id = requestIdField.getText().trim();
             int minutes = Integer.parseInt(initialMinutesField.getText().trim());
 
-            if (id.isEmpty() || minutes <= 0) {
+            if (id.isEmpty() || minutes < 0) {
                 showError("Enter a valid student ID and initial minutes.");
                 return;
             }
 
-            if (!system.approveRequest(id, minutes)) {
-                showError(system.getLastError());
-                return;
-            }
+            system.approveRequest(id, minutes);
             JOptionPane.showMessageDialog(this, "Registration request approved.");
 
             refreshView();
@@ -250,7 +340,9 @@ public class AdminFrame extends JFrame implements ActionListener {
     		// Reject a registration request	
         try {
             String id = requestIdField.getText().trim();
-            String reason = reasonArea.getText().trim();
+            String reason = JOptionPane.showInputDialog(this, "Rejection reason:");
+            if (reason == null) return;
+            reason = reason.trim();
             
             if (id.isEmpty() || reason.isEmpty()) {
                 showError("Enter the request ID and rejection reason.");
@@ -357,6 +449,13 @@ public class AdminFrame extends JFrame implements ActionListener {
     
     public LocalDateTime readSelectedDateTime() {
     		// Read the selected date and time
+        try {
+            datePicker.commitEdit();
+            timePicker.commitEdit();
+        } catch (java.text.ParseException ex) {
+            throw new IllegalArgumentException("Enter a valid date and time.");
+        }
+
         Date selectedDate = (Date) datePicker.getValue();
         Date selectedTime = (Date) timePicker.getValue();
         Calendar dateCalendar = Calendar.getInstance();
@@ -422,7 +521,7 @@ public class AdminFrame extends JFrame implements ActionListener {
     		// Log out and return to the login screen
         system.logout();
         dispose(); //Closes the current window
-        new LoginFrame(system);
+        new LoginFrame(system).setVisible(true);
     }
     
     public void showError(String message) {
