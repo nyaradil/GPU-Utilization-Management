@@ -3,3 +3,4 @@
 
 # Eclipse build output
 /bin/
+/gpu_state.txt
