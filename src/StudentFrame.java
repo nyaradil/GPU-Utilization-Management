@@ -164,7 +164,8 @@ public StudentFrame(GpuSystem system) {
     });
 
     setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-
+    
+    restoreJobDraft();
     refreshView();
     pack();
     setLocationRelativeTo(null);
@@ -380,6 +381,12 @@ private void handleSubmit() {
             descriptionArea.getText(),
             selectedTaskSize
         );
+        
+        Student student = (Student) system.getCurrentUser();
+        student.clearJobDraft();
+        
+        restoreJobDraft();
+        refreshView();
 
         titleField.setText("");
         applicationField.setText("");
@@ -472,6 +479,15 @@ private void handleCancel() {
 }
 
 private void handleLogout() {
+	
+	 Student student = (Student) system.getCurrentUser();
+
+	    student.saveJobDraft(
+	        titleField.getText(),
+	        applicationField.getText(),
+	        descriptionArea.getText(),
+	        selectedTaskSize
+	    );
 
     system.logout();
 
@@ -488,6 +504,15 @@ private void showError(String message) {
         "Error",
         JOptionPane.ERROR_MESSAGE
     );
+}
+
+private void restoreJobDraft() {
+    Student student = (Student) system.getCurrentUser();
+
+    titleField.setText(student.getDraftTitle());
+    applicationField.setText(student.getDraftApplication());
+    descriptionArea.setText(student.getDraftDescription());
+    selectedTaskSize = student.getDraftTaskSize();
 }
 
 }
