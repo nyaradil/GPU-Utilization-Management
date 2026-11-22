@@ -27,7 +27,7 @@ Students must register and receive approval before submitting jobs.
 
 ## Sample Data
 
-1. Run TestDriver.java to generate sample_gpu_state.txt.
+1. Use the included sample file, or run TestDriver to regenerate it after moving the existing sample.
 2. In Main.java, change:
    new FileManager("gpu_state.txt")
    to:
@@ -50,4 +50,4 @@ Changes are saved automatically to the file selected in Main.java.
 Simulation time advances only through the Advance Minute button.
 
 To return to normal data, close the app and switch Main.java back to
-gpu_state.txt. To start fresh, move or rename that existing file first.
+gpu_state.txt. To start fresh, move, delete or rename that existing file first.
