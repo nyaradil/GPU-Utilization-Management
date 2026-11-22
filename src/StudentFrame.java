@@ -212,11 +212,13 @@ private void refreshView() {
         String status = job.getStatus();
 
         jobsArea.append(
-            "Job ID: " + jobId + "\n"
-            + "Title: " + job.getTitle() + "\n"
-            + "Application: " + job.getApplicationName() + "\n"
-            + "Status: " + status + "\n"
-        );
+        	    "Job ID: " + jobId + "\n"
+        	    + "Title: " + job.getTitle() + "\n"
+        	    + "Application: " + job.getApplicationName() + "\n"
+        	    + "Status: " + status + "\n"
+        	    + "Submitted: "
+        	    + system.formatMinute(job.getSubmissionMinute()) + "\n"
+        	);
 
         if (job.getAssignedGpuId() == -1) {
             jobsArea.append("GPU: Not assigned\n");
@@ -240,10 +242,12 @@ private void refreshView() {
             );
 
         } else {
-            jobsArea.append(
-                "Actual start: "
-                + system.formatMinute(job.getStartMinute()) + "\n"
-            );
+        	jobsArea.append(
+        		    "Actual start: "
+        		    + system.formatMinute(job.getStartMinute()) + "\n"
+        		    + "Total queue wait: "
+        		    + job.getTotalQueueWait() + " minutes\n"
+        		);
 
             if (status.equals("Running")) {
                 jobsArea.append(
